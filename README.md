@@ -1,3 +1,4 @@
 # agdc-aws
 agdc aws poc cloud formation automation script
-hello world
+
+![AGDC Logo] (docs/images/logo.png)
