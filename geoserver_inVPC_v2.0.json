@@ -1,0 +1,443 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "cloud formation for Geoserver in private subnet with public ELB",
+	
+	"Outputs": {
+        "GeoserverELBURL": {
+            "Value": {
+                "Fn::Join": [
+                    "https://",
+                    {
+                        "Fn::GetAtt": [
+                            "ELBExternal",
+                            "DNSName"
+                        ]
+                    }
+                ]
+            },
+            "Description": "URL for ELB geoserver"
+        },
+		"VPC" : {
+            "Value" : {"Ref":"VPC"},
+            "Description" : "VPC ID"
+        }
+		
+    },
+	
+    "Parameters": {
+        "VPC": {
+            "Default": "vpc-f9df7d9c",
+            "Type": "String"
+        },
+        "privatesubnet": {
+            "Default": "subnet-a3238dd4",
+            "Type": "List<AWS::EC2::Subnet::Id>"
+        },
+        "publicsubnet": {
+            "Default": "subnet-df2f81a8",
+            "Type": "List<AWS::EC2::Subnet::Id>"
+        },
+        "ImageId": {
+            "Default": "ami-d114f295",
+            "Type": "String"
+        },
+        "GeoserverAZpublic": {
+            "Default": "ap-southeast-2b",
+            "Type": "List<AWS::EC2::AvailabilityZone::Name>"
+        },
+        "KeyName": {
+            "Description": "The EC2 Key Pair to allow SSH access to the instances",
+            "Default": "MyRecoveryKeysNEW",
+			"Type": "List<AWS::EC2::KeyPair::KeyName>"
+        }, 		
+		"InstanceType": {
+            "Default":"t2.micro",
+            "Type": "String"
+        },
+        "GeoserverAZprivate": {
+            "Default": "ap-southeast-2b",
+            "Type": "List<AWS::EC2::AvailabilityZone::Name>"
+        }
+    },
+    "Resources": {
+        "ELBExternal": {
+            "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+            "Properties": {
+                "Subnets": {
+                    "Ref": "publicsubnet"
+                },
+                "HealthCheck": {
+                    "HealthyThreshold": "10",
+                    "Interval": "30",
+                    "Target": "HTTP:80/index.html",
+                    "Timeout": "5",
+                    "UnhealthyThreshold": "2"
+                },
+                "ConnectionDrainingPolicy": {
+                    "Enabled": "true",
+                    "Timeout": "300"
+                },
+                "ConnectionSettings": {
+                    "IdleTimeout": "60"
+                },
+                "CrossZone": "true",
+                "SecurityGroups": [
+                    {
+                        "Ref": "ELBEXTSG"
+                    }
+                ],
+                "Listeners": [
+                    {
+                        "InstancePort": "80",
+                        "LoadBalancerPort": "443",
+                        "Protocol": "HTTPS",
+                        "InstanceProtocol": "HTTP",
+                        "SSLCertificateId": "arn:aws:iam::462472134991:server-certificate/test"
+                    },
+                    {
+                        "InstancePort": "80",
+                        "LoadBalancerPort": "80",
+                        "Protocol": "HTTP",
+                        "InstanceProtocol": "HTTP"
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "External internetfacing ELB"
+                    }
+                ]
+            }
+        },
+        "GeoserverInstancesASG": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "AvailabilityZones": {
+                    "Ref": "GeoserverAZprivate"
+                },
+                "Cooldown": "300",
+                "DesiredCapacity": "1",
+                "HealthCheckGracePeriod": "300",
+                "HealthCheckType": "EC2",
+                "MaxSize": "2",
+                "MinSize": "1",
+                "VPCZoneIdentifier": {
+                    "Ref": "privatesubnet"
+                },
+                "LaunchConfigurationName": {
+                    "Ref": "EC2InstanceLC"
+                },
+                "LoadBalancerNames": [
+                    {
+                        "Ref": "ELBExternal"
+                    }
+                ],
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "ASG_geoserver_instances",
+                        "PropagateAtLaunch": true
+                    }
+                ],
+                "TerminationPolicies": [
+                    "Default"
+                ]
+            }
+        },
+        "EC2InstanceLC": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Properties": {
+                "ImageId": {
+                    "Ref": "ImageId"
+                },
+                "InstanceType": {
+                    "Ref": "InstanceType"
+                },
+                "KeyName": {
+                    "Ref": "KeyName"
+                },
+                "SecurityGroups": [
+                    {
+                        "Ref": "EC2InstanceSG"
+                    }
+                ],
+                "BlockDeviceMappings": [
+                    {
+                        "DeviceName": "/dev/xvda",
+                        "Ebs": {
+                            "VolumeSize": 8
+                        }
+                    }
+                ],
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": 
+						[
+                            "#!/bin/bash\n",
+                            "echo test > /tmp/ec2bycloudform;",
+							"mkdir -p /var/www/html/",
+                            "echo '<?phpinfo?>' > /var/www/html/index.html;"
+                        ]
+                    }
+                }
+            }
+        },
+        "EC2InstanceSG": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "SG for EC2 instances in Geoserver",
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "EC2InstanceSG"
+                    }
+                ]
+            }
+        },
+        "ELBSG": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Geoserver ELB SG http and https",
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "Geoserver_Internal_ELB_SG"
+                    }
+                ]
+            }
+        },
+        "ASGLCSG": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "AutoScaling-Security-Group for Geoserver",
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "ASG_LC_SG"
+                    }
+                ]
+            }
+        },
+        "ELBEXTSG": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "external internet facing ELB SG",
+                "VpcId": {
+                    "Ref": "VPC"
+                },
+                "Tags": [
+                    {
+                        "Key": "Name",
+                        "Value": "Externl internet facing ELB SG allow http/s"
+                    }
+                ]
+            }
+        },
+        "scalingDecreaseGroupSize": {
+            "Type": "AWS::AutoScaling::ScalingPolicy",
+            "Properties": {
+                "AdjustmentType": "ChangeInCapacity",
+                "AutoScalingGroupName": {
+                    "Ref": "GeoserverInstancesASG"
+                },
+                "Cooldown": "60",
+                "ScalingAdjustment": "-1"
+            }
+        },
+        "scalingIncreaseGroupSize": {
+            "Type": "AWS::AutoScaling::ScalingPolicy",
+            "Properties": {
+                "AdjustmentType": "ChangeInCapacity",
+                "AutoScalingGroupName": {
+                    "Ref": "GeoserverInstancesASG"
+                },
+                "Cooldown": "60",
+                "ScalingAdjustment": "1"
+            }
+        },
+        "alarmawsec2GeoserverInstancesCPUUtilization10percent": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "ActionsEnabled": "true",
+                "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+                "EvaluationPeriods": "1",
+                "MetricName": "CPUUtilization",
+                "Namespace": "AWS/EC2",
+                "Period": "300",
+                "Statistic": "Minimum",
+                "Threshold": "10.0",
+                "Dimensions": [
+                    {
+                        "Name": "AutoScalingGroupName",
+                        "Value": "Geoserver Instances"
+                    }
+                ]
+            }
+        },
+        "alarmawsec2GeoserverInstancesHighCPUUtilization5percent": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "ActionsEnabled": "true",
+                "ComparisonOperator": "LessThanThreshold",
+                "EvaluationPeriods": "1",
+                "MetricName": "CPUUtilization",
+                "Namespace": "AWS/EC2",
+                "Period": "300",
+                "Statistic": "Minimum",
+                "Threshold": "5.0",
+                "Dimensions": [
+                    {
+                        "Name": "AutoScalingGroupName",
+                        "Value": "Geoserver Instances"
+                    }
+                ]
+            }
+        },
+        "ingress1": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "EC2InstanceSG"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "22",
+                "ToPort": "22",
+                "CidrIp": "10.0.0.0/24"
+            }
+        },
+        "ingress2": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "EC2InstanceSG"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "80",
+                "ToPort": "80",
+                "CidrIp": "0.0.0.0/0"
+            }
+        },
+        "ingress3": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "EC2InstanceSG"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "443",
+                "ToPort": "443",
+                "CidrIp": "0.0.0.0/0"
+            }
+        },
+        "ingress4": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "ELBSG"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "80",
+                "ToPort": "80",
+                "CidrIp": "10.0.0.0/24"
+            }
+        },
+        "ingress5": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "ELBSG"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "443",
+                "ToPort": "443",
+                "CidrIp": "10.0.0.0/24"
+            }
+        },
+        "ingress6": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "ASGLCSG"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "22",
+                "ToPort": "22",
+                "CidrIp": "10.0.0.0/24"
+            }
+        },
+        "ingress7": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "ELBEXTSG"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "80",
+                "ToPort": "80",
+                "CidrIp": "0.0.0.0/0"
+            }
+        },
+        "ingress8": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "ELBEXTSG"
+                },
+                "IpProtocol": "tcp",
+                "FromPort": "443",
+                "ToPort": "443",
+                "CidrIp": "0.0.0.0/0"
+            }
+        },
+        "egress1": {
+            "Type": "AWS::EC2::SecurityGroupEgress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "EC2InstanceSG"
+                },
+                "IpProtocol": "-1",
+                "CidrIp": "0.0.0.0/0"
+            }
+        },
+        "egress2": {
+            "Type": "AWS::EC2::SecurityGroupEgress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "ELBSG"
+                },
+                "IpProtocol": "-1",
+                "CidrIp": "0.0.0.0/0"
+            }
+        },
+        "egress3": {
+            "Type": "AWS::EC2::SecurityGroupEgress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "ASGLCSG"
+                },
+                "IpProtocol": "-1",
+                "CidrIp": "0.0.0.0/0"
+            }
+        },
+        "egress4": {
+            "Type": "AWS::EC2::SecurityGroupEgress",
+            "Properties": {
+                "GroupId": {
+                    "Ref": "ELBEXTSG"
+                },
+                "IpProtocol": "-1",
+                "CidrIp": "0.0.0.0/0"
+            }
+        }
+    }
+    
+}
