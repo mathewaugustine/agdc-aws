@@ -3,20 +3,6 @@
     "Description": "cloud formation for Geoserver in private subnet with public ELB",
 	
 	"Outputs": {
-        "GeoserverELBURL": {
-            "Value": {
-                "Fn::Join": [
-                    "https://",
-                    {
-                        "Fn::GetAtt": [
-                            "ELBExternal",
-                            "DNSName"
-                        ]
-                    }
-                ]
-            },
-            "Description": "URL for ELB geoserver"
-        },
 		"VPC" : {
             "Value" : {"Ref":"VPC"},
             "Description" : "VPC ID"
@@ -26,39 +12,38 @@
 	
     "Parameters": {
         "VPC": {
-            "Default": "vpc-f9df7d9c",
-            "Type": "String"
+             "Type": "String",
+			 "Default": "vpc-576fc432",
+			 "Description": "The VPC to where the instances has to be launched. eg vpc-576fc432"
         },
         "privatesubnet": {
-            "Default": "subnet-a3238dd4",
             "Type": "List<AWS::EC2::Subnet::Id>"
         },
         "publicsubnet": {
-            "Default": "subnet-df2f81a8",
             "Type": "List<AWS::EC2::Subnet::Id>"
         },
         "ImageId": {
-            "Default": "ami-d114f295",
-            "Type": "String"
-        },
-        "GeoserverAZpublic": {
-            "Default": "ap-southeast-2b",
-            "Type": "List<AWS::EC2::AvailabilityZone::Name>"
+            "Type": "String",
+			"Default": "ami-33fe3b77",
+			"Description" : "Image you need to be cloned in your Region eg: ami-33fe3b77"
+			
         },
         "KeyName": {
             "Description": "The EC2 Key Pair to allow SSH access to the instances",
             "Default": "MyRecoveryKeysNEW",
-			"Type": "List<AWS::EC2::KeyPair::KeyName>"
+			"Type": "String"
         }, 		
 		"InstanceType": {
             "Default":"t2.micro",
             "Type": "String"
         },
         "GeoserverAZprivate": {
-            "Default": "ap-southeast-2b",
-            "Type": "List<AWS::EC2::AvailabilityZone::Name>"
+            "Default": "us-west-1b",
+			"Type": "String"
         }
     },
+	
+	
     "Resources": {
         "ELBExternal": {
             "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
@@ -112,15 +97,13 @@
         "GeoserverInstancesASG": {
             "Type": "AWS::AutoScaling::AutoScalingGroup",
             "Properties": {
-                "AvailabilityZones": {
-                    "Ref": "GeoserverAZprivate"
-                },
+                "AvailabilityZones" : { "Fn::GetAZs" : "us-west-1c"},
                 "Cooldown": "300",
                 "DesiredCapacity": "1",
                 "HealthCheckGracePeriod": "300",
                 "HealthCheckType": "EC2",
+				"MinSize": "1",
                 "MaxSize": "2",
-                "MinSize": "1",
                 "VPCZoneIdentifier": {
                     "Ref": "privatesubnet"
                 },
@@ -135,7 +118,7 @@
                 "Tags": [
                     {
                         "Key": "Name",
-                        "Value": "ASG_geoserver_instances",
+                        "Value": "EXP_Geoserver",
                         "PropagateAtLaunch": true
                     }
                 ],
@@ -169,17 +152,21 @@
                         }
                     }
                 ],
+				
                 "UserData": {
                     "Fn::Base64": {
                         "Fn::Join": 
-						[
-                            "#!/bin/bash\n",
+						[ "",	[
                             "echo test > /tmp/ec2bycloudform;",
-							"mkdir -p /var/www/html/",
-                            "echo '<?phpinfo?>' > /var/www/html/index.html;"
+							"echo '<?php phpinfo();?>' > /var/www/html/index.html;",
+							"echo 'AddType application/x-httpd-php .html' >> /etc/httpd/conf/httpd.conf;",
+							"service httpd restart;"
+							]
                         ]
                     }
                 }
+				
+
             }
         },
         "EC2InstanceSG": {
